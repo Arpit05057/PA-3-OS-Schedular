@@ -1,0 +1,43 @@
+Programming Assignment: Processes, Threads, and Synchronization
+Name:
+Roll number:
+
+A-Q1. Why should execvp() normally be called in the child rather than the shell process?
+execvp() replaces the calling process's whole image with the new program. If the shell called it, the shell would be overwritten and never return to the prompt. Calling it in a forked child replaces only the child, while the parent shell survives, waits, and reads the next command. It also lets a failed execvp() kill just the child.
+
+A-Q2. Why must cd be implemented by the shell process itself rather than by a forked child?
+A process's working directory belongs to that process. chdir() in a forked child changes only the child's copy, and the child then exits or execs, so the parent shell's directory is unchanged. cd must therefore call chdir() in the shell process itself so later commands see the new directory.
+
+A-Q3. What problem can arise if the parent never waits for terminated child processes?
+Terminated children stay as zombie processes (entries in the process table holding exit status) until the parent calls wait/waitpid. A long-running shell that never reaps them leaks process-table slots and PIDs, which can eventually make fork() fail. The parent also never learns the child's exit status.
+
+B-Q1. Decompose total_jobs++ into conceptual load/modify/store steps. Why is it not an indivisible operation?
+total_jobs++ is conceptually: (1) load total_jobs from memory into a register; (2) modify: add 1 to the register; (3) store the register back to memory. These are separate instructions, and a thread can be preempted (or run in parallel with another core) between them, so the sequence is not indivisible (not atomic).
+
+B-Q2. Give an interleaving of two threads that loses one increment.
+Let total_jobs = 5. Thread 1 loads 5. Thread 2 loads 5. Thread 1 computes 6 and stores 6. Thread 2 computes 6 and stores 6. Two increments happened but the value is 6 instead of 7, so one update is lost.
+
+B-Q3. Why can the unsafe program sometimes appear to produce the expected result?
+The race only matters if threads interleave inside the load/modify/store window. With few iterations or short runtimes, one thread may finish before the next starts, or the scheduler may happen not to preempt inside the window, so the result can be correct by luck. A race is a non-deterministic bug, not a guaranteed wrong result, and its absence in one run is no proof of correctness.
+
+C-Q1. Why must queue head, tail, and count be protected by the same mutex?
+head, tail and count describe one invariant (e.g. count = number of items between head and tail). If they were guarded by different locks, or not guarded, a thread could see or write an inconsistent combination, such as a pop that reads count > 0 while a push has not yet written the slot or moved tail. That causes lost, duplicated or garbage jobs and overflow/underflow. One mutex makes each push/pop update all three as a single critical section.
+
+C-Q2. Why must releasing the mutex and sleeping in pthread_cond_wait() behave atomically?
+If the mutex were released first and the thread slept afterwards, there would be a gap in which another thread could change the state and signal the condition. That signal would arrive while the waiter was not yet sleeping and would be lost, so the waiter would sleep forever (lost wakeup) even though the condition is already true. Atomic release-and-sleep guarantees any signal sent after the waiter released the mutex will find it already waiting.
+
+C-Q3. Why must the condition around pthread_cond_wait() be checked with while rather than if?
+A woken thread must re-check the predicate because: (1) spurious wakeups can occur; (2) another thread may have run first and consumed the item or filled the slot between the signal and this thread reacquiring the mutex; (3) with broadcast/shutdown, several threads wake but the state may satisfy only some of them. An if would proceed with a false predicate (pop from an empty queue, push to a full one). A while re-tests it each time.
+
+C-Q4. Why is pthread_cond_broadcast() appropriate during queue shutdown?
+At shutdown, every consumer blocked on an empty queue must learn that no more jobs will come and exit. Broadcast wakes all of them. With signal() only one consumer wakes and exits; the rest stay asleep on not_empty forever, so pthread_join() on them hangs and the program deadlocks. (My queue_shutdown also broadcasts not_full so blocked producers are released.)
+
+C-Q5. Why is a condition variable preferable to busy waiting when the queue is empty for a long time?
+Busy waiting (lock, check, unlock, retry) burns CPU while the queue is empty, contends for the mutex and slows threads doing useful work, and wastes power. A condition variable puts the thread to sleep with no CPU use and wakes it only when a producer signals that state changed, so waiting costs nearly nothing however long the queue stays empty.
+
+C-Q6. Why can per-worker jobs_completed counters reduce synchronization overhead compared with one shared global counter?
+A single global counter must be locked (or made atomic) on every completion, so all printer threads contend on one lock and cache line, serializing and slowing them. With per-worker counters each thread updates only its own variable with no locking or sharing; main sums them after pthread_join(), which provides the needed happens-before ordering. This removes contention and cache-line bouncing.
+
+BONUS-Q. If you attempt the bonus, explain why queue_shutdown() must occur only after ALL producer threads have terminated.
+One finished producer does not mean all have finished. queue_shutdown() makes queue_push() fail, so other producers still running would have jobs rejected (lost) and the total would be wrong. Required order: (1) pthread_join() ALL producers, so no more jobs can be submitted; (2) call queue_shutdown() to wake consumers, which drain the remaining jobs and exit; (3) pthread_join() all printer/consumer threads; only then read totals and destroy the queue.
+
