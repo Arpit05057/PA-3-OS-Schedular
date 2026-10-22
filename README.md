@@ -1,7 +1,7 @@
 # CSE231: Programming Assignment 3 — Processes, Threads, and Synchronization
 
-**Name:** Arpit Shukla  
-**Roll Number:** 2025105  
+**Name:** Arpit Shukla , Yug Bansal
+**Roll Number:** 2025105  , 2025579
 **Private GitHub Repository:** Add your PA3 repository link here
 
 # Overview
